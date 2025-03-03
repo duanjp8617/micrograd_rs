@@ -1,6 +1,15 @@
 [package]
-name = "micrograd_rs"
+name = "micrograd"
 version = "0.1.0"
+authors = ["duanjp8617 <duanjp8617@gmail.com>"]
+description = "Implement karpathy/micrograd in rust."
+homepage = "https://github.com/duanjp8617/micrograd_rs"
+repository = "https://github.com/duanjp8617/micrograd_rs"
+readme = "README.md"
 edition = "2021"
 
 [dependencies]
+
+[[example]]
+name = "simple_gradient"
+path = "examples/simple_gradient.rs"
