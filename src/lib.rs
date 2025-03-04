@@ -58,6 +58,22 @@ impl Value {
     pub fn powi(self, exponent: i32) -> Value {
         self.powf(exponent.into())
     }
+
+    pub fn relu(self) -> Value {
+        let x = self.0.clone();
+        let x_grad_func = Box::new(move |parent_grad: f64| {
+            let d = if x.borrow().data <= 0.0 { 0.0 } else { 1.0 };
+            x.borrow_mut().gradient += d * parent_grad
+        });
+
+        let val = ValueInner {
+            data: if self.data() <= 0.0 { 0.0 } else { self.data() },
+            gradient: 0.0,
+            prevs: vec![(self.0.clone(), x_grad_func)],
+        };
+
+        Value(Rc::new(RefCell::new(val)))
+    }
 }
 
 impl From<i32> for Value {
@@ -177,5 +193,57 @@ impl MulAssign for Value {
 impl DivAssign for Value {
     fn div_assign(&mut self, rhs: Self) {
         *self = self.clone() / rhs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forward_correct() {
+        let compute_graph = || -> f64 {
+            let a = Value::new(-4.0);
+            let b = Value::new(2.0);
+            let mut c = a.clone() + b.clone();
+            let mut d = a.clone() * b.clone() + b.clone().powi(3);
+            c += c.clone() + 1.into();
+            c += Value::from(1) + c.clone() + (-a.clone());
+            d += d.clone() * 2.into() + (b.clone() + a.clone()).relu();
+            d += Value::from(3) * d.clone() + (b.clone() - a.clone()).relu();
+            let e = c.clone() - d.clone();
+            let f = e.clone().powi(2);
+            let mut g = f.clone() / 2.0.into();
+            g += Value::from(10.0) / f.clone();
+
+            g.data()
+        };
+
+        let rust_native = || -> f64 {
+            fn relu(n: f64) -> f64 {
+                if n <= 0.0 {
+                    0.0
+                } else {
+                    n
+                }
+            }
+
+            let a: f64 = -4.0;
+            let b: f64 = 2.0;
+            let mut c = a + b;
+            let mut d = a * b + b.powi(3);
+            c += c + 1.0;
+            c += 1.0 + c + (-a);
+            d += d * 2.0 + relu(b + a);
+            d += 3.0 * d + relu(b - a);
+            let e = c - d;
+            let f = e.powi(2);
+            let mut g = f / 2.0;
+            g += 10.0 / f;
+            g
+        };
+
+        // println!("{:.4}", compute_graph());
+        assert_eq!(compute_graph(), rust_native());
     }
 }
