@@ -108,6 +108,44 @@ impl Value {
 
         Value(Rc::new(RefCell::new(val)))
     }
+
+    pub fn exp(self) -> Value {
+        let exp_res = self.data().exp();
+
+        let x = self.0.clone();
+        // d(e^x)/dx -> e^x * parent_grad;
+        let grad_func =
+            Box::new(move |parent_grad: f64| x.borrow_mut().gradient += exp_res * parent_grad);
+
+        let val = ValueInner {
+            data: exp_res,
+            gradient: 0.0,
+            prevs: vec![self.0.clone()],
+            grad_func,
+        };
+
+        Value(Rc::new(RefCell::new(val)))
+    }
+
+    pub fn tanh(self) -> Value {
+        let e2x = (2.0 * self.data()).exp();
+        let tanh_res = (e2x - 1.0) / (e2x + 1.0);
+
+        let x = self.0.clone();
+        // d(tanh(x))/dx -> (1-tanh(x)^2) * parent_grad;
+        let grad_func = Box::new(move |parent_grad: f64| {
+            x.borrow_mut().gradient += (1.0 - tanh_res.powi(2)) * parent_grad
+        });
+
+        let val = ValueInner {
+            data: tanh_res,
+            gradient: 0.0,
+            prevs: vec![self.0.clone()],
+            grad_func,
+        };
+
+        Value(Rc::new(RefCell::new(val)))
+    }
 }
 
 impl From<i32> for Value {
