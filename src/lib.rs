@@ -10,7 +10,8 @@ type ObjPtr = Rc<RefCell<ValueInner>>;
 struct ValueInner {
     data: f64,
     gradient: f64,
-    prevs: Vec<(ObjPtr, GradFunc)>,
+    prevs: Vec<ObjPtr>,
+    grad_func: GradFunc,
 }
 
 impl ValueInner {
@@ -19,6 +20,7 @@ impl ValueInner {
             data,
             gradient: 0.0,
             prevs: vec![],
+            grad_func: Box::new(|_| {}),
         }
     }
 }
@@ -39,50 +41,13 @@ impl Value {
         self.0.borrow().gradient
     }
 
-    pub fn zero_grad(&self) {
+    pub fn reset_grad(&self) {
         self.0.borrow_mut().gradient = 0.0;
-    }
-
-    pub fn powf(self, exponent: f64) -> Value {
-        let x = self.0.clone();
-        // d(x^exponent)/dx -> exponent * (x)^(exponent-1) * parent_grad
-        let x_grad_func = Box::new(move |parent_grad: f64| {
-            let result = exponent * (x.borrow().data.powf(exponent - 1.0)) * parent_grad;
-            x.borrow_mut().gradient += result;
-        });
-
-        let val = ValueInner {
-            data: self.data().powf(exponent),
-            gradient: 0.0,
-            prevs: vec![(self.0.clone(), x_grad_func)],
-        };
-
-        Value(Rc::new(RefCell::new(val)))
-    }
-
-    pub fn powi(self, exponent: i32) -> Value {
-        self.powf(exponent.into())
-    }
-
-    pub fn relu(self) -> Value {
-        let x = self.0.clone();
-        let x_grad_func = Box::new(move |parent_grad: f64| {
-            let d = if x.borrow().data <= 0.0 { 0.0 } else { 1.0 };
-            x.borrow_mut().gradient += d * parent_grad
-        });
-
-        let val = ValueInner {
-            data: if self.data() <= 0.0 { 0.0 } else { self.data() },
-            gradient: 0.0,
-            prevs: vec![(self.0.clone(), x_grad_func)],
-        };
-
-        Value(Rc::new(RefCell::new(val)))
     }
 
     pub fn backward(&self) {
         fn dfs(curr: ObjPtr, set: &mut HashSet<usize>, reverse_top: &mut Vec<ObjPtr>) {
-            for (n, _) in curr.borrow().prevs.iter() {
+            for n in curr.borrow().prevs.iter() {
                 let node_idx = n.as_ptr() as usize;
                 if !set.contains(&node_idx) {
                     set.insert(node_idx);
@@ -101,10 +66,47 @@ impl Value {
         reverse_top.last().unwrap().borrow_mut().gradient = 1.0;
         for node in reverse_top.iter().rev() {
             let node = node.borrow();
-            for (_, func) in node.prevs.iter() {
-                func(node.gradient);
-            }
+            (node.grad_func)(node.gradient);
         }
+    }
+
+    pub fn powf(self, exponent: f64) -> Value {
+        let x = self.0.clone();
+        // d(x^exponent)/dx -> exponent * (x)^(exponent-1) * parent_grad
+        let grad_func = Box::new(move |parent_grad: f64| {
+            let result = exponent * (x.borrow().data.powf(exponent - 1.0)) * parent_grad;
+            x.borrow_mut().gradient += result;
+        });
+
+        let val = ValueInner {
+            data: self.data().powf(exponent),
+            gradient: 0.0,
+            prevs: vec![self.0.clone()],
+            grad_func,
+        };
+
+        Value(Rc::new(RefCell::new(val)))
+    }
+
+    pub fn powi(self, exponent: i32) -> Value {
+        self.powf(exponent.into())
+    }
+
+    pub fn relu(self) -> Value {
+        let x = self.0.clone();
+        let grad_func = Box::new(move |parent_grad: f64| {
+            let d = if x.borrow().data <= 0.0 { 0.0 } else { 1.0 };
+            x.borrow_mut().gradient += d * parent_grad
+        });
+
+        let val = ValueInner {
+            data: if self.data() <= 0.0 { 0.0 } else { self.data() },
+            gradient: 0.0,
+            prevs: vec![self.0.clone()],
+            grad_func,
+        };
+
+        Value(Rc::new(RefCell::new(val)))
     }
 }
 
@@ -125,17 +127,19 @@ impl Add for Value {
 
     fn add(self, rhs: Value) -> Value {
         let x = self.0.clone();
-        // d(x + y)/dx -> 1 * parent_grad
-        let x_grad_func = Box::new(move |parent_grad: f64| x.borrow_mut().gradient += parent_grad);
-
         let y = rhs.0.clone();
+        // d(x + y)/dx -> 1 * parent_grad
         // d(x + y)/dy -> 1 * parent_grad
-        let y_grad_func = Box::new(move |parent_grad: f64| y.borrow_mut().gradient += parent_grad);
+        let grad_func = Box::new(move |parent_grad: f64| {
+            x.borrow_mut().gradient += parent_grad;
+            y.borrow_mut().gradient += parent_grad;
+        });
 
         let val = ValueInner {
             data: self.data() + rhs.data(),
             gradient: 0.0,
-            prevs: vec![(self.0.clone(), x_grad_func), (rhs.0.clone(), y_grad_func)],
+            prevs: vec![self.0.clone(), rhs.0.clone()],
+            grad_func,
         };
 
         Value(Rc::new(RefCell::new(val)))
@@ -148,12 +152,13 @@ impl Neg for Value {
     fn neg(self) -> Self::Output {
         let x = self.0.clone();
         // d(-x)/dx -> -1 * parent_grad
-        let x_grad_func = Box::new(move |parent_grad: f64| x.borrow_mut().gradient -= parent_grad);
+        let grad_func = Box::new(move |parent_grad: f64| x.borrow_mut().gradient -= parent_grad);
 
         let val = ValueInner {
             data: -self.data(),
             gradient: 0.0,
-            prevs: vec![(self.0.clone(), x_grad_func)],
+            prevs: vec![self.0.clone()],
+            grad_func,
         };
 
         Value(Rc::new(RefCell::new(val)))
@@ -175,21 +180,17 @@ impl Mul for Value {
         let x = self.0.clone();
         let y = rhs.0.clone();
         // d(x * y)/dx -> y * parent_grad
-        let x_grad_func = Box::new(move |parent_grad: f64| {
-            x.borrow_mut().gradient += y.borrow().data * parent_grad
-        });
-
-        let x = self.0.clone();
-        let y = rhs.0.clone();
         // d(x * y)/dy -> x * parent_grad
-        let y_grad_func = Box::new(move |parent_grad: f64| {
-            y.borrow_mut().gradient += x.borrow().data * parent_grad
+        let grad_func = Box::new(move |parent_grad: f64| {
+            x.borrow_mut().gradient += y.borrow().data * parent_grad;
+            y.borrow_mut().gradient += x.borrow().data * parent_grad;
         });
 
         let val = ValueInner {
             data: self.data() * rhs.data(),
             gradient: 0.0,
-            prevs: vec![(self.0.clone(), x_grad_func), (rhs.0.clone(), y_grad_func)],
+            prevs: vec![self.0.clone(), rhs.0.clone()],
+            grad_func,
         };
 
         Value(Rc::new(RefCell::new(val)))
@@ -275,7 +276,7 @@ mod tests {
             g
         };
 
-        // println!("{:.4}", compute_graph());
+        assert_eq!(format!("{:.4}", compute_graph()), "24.7041");
         assert_eq!(compute_graph(), rust_native());
     }
 
@@ -297,38 +298,6 @@ mod tests {
 
             g.backward();
             (a.gradient(), b.gradient())
-        };
-
-        let _rust_native = || -> (f64, f64) {
-            let native_func = |a: f64, b: f64| -> f64 {
-                fn relu(n: f64) -> f64 {
-                    if n <= 0.0 {
-                        0.0
-                    } else {
-                        n
-                    }
-                }
-
-                let mut c = a + b;
-                let mut d = a * b + b.powi(3);
-                c += c + 1.0;
-                c += 1.0 + c + (-a);
-                d += d * 2.0 + relu(b + a);
-                d += 3.0 * d + relu(b - a);
-                let e = c - d;
-                let f = e.powi(2);
-                let mut g = f / 2.0;
-                g += 10.0 / f;
-                g
-            };
-
-            let manual_da =
-                |a: f64, b: f64, h: f64| -> f64 { (native_func(a + h, b) - native_func(a, b)) / h };
-
-            let manual_db =
-                |a: f64, b: f64, h: f64| -> f64 { (native_func(a, b + h) - native_func(a, b)) / h };
-
-            (manual_da(-4.0, 2.0, 0.0001), manual_db(-4.0, 2.0, 0.0001))
         };
 
         let (a, b) = compute_graph();
