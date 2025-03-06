@@ -16,7 +16,7 @@ fn main() {
     let ys = [1.0, -1.0, -1.0, 1.0];
     let ys: Vec<_> = ys.into_iter().map(Value::new).collect();
 
-    let mlp = MLP::new(3, &[4, 4, 1], false);
+    let mlp = MLP::new(3, &[4, 4, 1]);
     let mut y_preds = Vec::new();
 
     for i in 0..100 {

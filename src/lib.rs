@@ -328,8 +328,8 @@ impl Neuron {
         }
     }
 
-    pub fn pp(&self, offset: usize, x: &[Value]) -> Value {
-        print!("{}w: ", " ".repeat(offset));
+    fn _pp(&self, offset: usize, x: &[Value]) -> Value {
+        print!("{}wb: ", " ".repeat(offset));
         for w in self.w.iter() {
             print!("{}, ", w.data());
         }
@@ -337,6 +337,13 @@ impl Neuron {
 
         let res = self.call(x);
         println!("{}result: {}", " ".repeat(offset), res.data());
+
+        print!("{}wb_grad: ", " ".repeat(offset));
+        for w in self.w.iter() {
+            print!("{}, ", w.gradient());
+        }
+        println!("{}", self.b.gradient());
+
         res
     }
 }
@@ -367,7 +374,7 @@ impl Layer {
         res
     }
 
-    pub fn pp(&self, offset: usize, x: &[Value]) -> Vec<Value> {
+    fn _pp(&self, offset: usize, x: &[Value]) -> Vec<Value> {
         print!("{}input: ", " ".repeat(offset));
         for x in x {
             print!("{}, ", x.data());
@@ -377,7 +384,7 @@ impl Layer {
         let mut res = Vec::new();
         for i in 0..self.ws.len() {
             println!("{}neuron {}: ", " ".repeat(offset), i);
-            res.push(self.ws[i].pp(offset + 2, x));
+            res.push(self.ws[i]._pp(offset + 2, x));
         }
         res
     }
@@ -398,10 +405,10 @@ pub struct MLP {
 }
 
 impl MLP {
-    pub fn new(mut nin: usize, nouts: &[usize], non_linear: bool) -> Self {
+    pub fn new(mut nin: usize, nouts: &[usize]) -> Self {
         let mut layers = Vec::new();
-        layers.extend(nouts.iter().map(|nout| {
-            let layer = Layer::new(nin, *nout, non_linear);
+        layers.extend(nouts.iter().enumerate().map(|(idx, nout)| {
+            let layer = Layer::new(nin, *nout, idx != nouts.len() - 1);
             nin = *nout;
             layer
         }));
@@ -415,23 +422,20 @@ impl MLP {
                 res = layer.call(&res);
             }
         }
-        println!("finish a mlp call with");
-        for v in &res {
-            print!("{} ", v.data());
-        }
-        println!("");
         res
     }
 
-    pub fn pp(&self, x: &[Value]) {
+    fn _pp(&self, x: &[Value]) -> Vec<Value> {
         println!("layer 0: ");
 
-        let mut x = self.layers[0].pp(2, x);
+        let mut x = self.layers[0]._pp(2, x);
 
         for i in 1..self.layers.len() {
             println!("layer {i}: ");
-            x = self.layers[i].pp(2, &x[..]);
+            x = self.layers[i]._pp(2, &x[..]);
         }
+
+        x
     }
 }
 
@@ -562,12 +566,10 @@ mod tests {
         assert_eq!(format!("{:.4}", z.gradient()), "-8.0000");
     }
 
-    #[test]
-    fn print_test() {
-        let mlp = MLP::new(2, &[16, 16, 1], true);
-
-        let input = [Value::new(0.777), Value::new(0.888)];
-
-        mlp.pp(&input[..]);
+    // This function prints the structure of the mlp and can be used for debugging.
+    fn _print_test() {
+        let mlp = MLP::new(2, &[16, 16, 1]);
+        let input = [Value::new(5.53627588e-01), Value::new(-4.23125821e-01)];
+        mlp._pp(&input[..]);
     }
 }
