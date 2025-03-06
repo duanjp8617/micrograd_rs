@@ -4,6 +4,8 @@ use std::convert::From;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::rc::Rc;
 
+use rand::Rng;
+
 type GradFunc = Box<dyn Fn(f64)>;
 type ObjPtr = Rc<RefCell<ValueInner>>;
 
@@ -35,6 +37,10 @@ impl Value {
 
     pub fn data(&self) -> f64 {
         self.0.borrow().data
+    }
+
+    pub fn set_data(&self, value: f64) {
+        self.0.borrow_mut().data = value;
     }
 
     pub fn gradient(&self) -> f64 {
@@ -127,7 +133,7 @@ impl Value {
         Value(Rc::new(RefCell::new(val)))
     }
 
-    pub fn tanh(self) -> Value {
+    pub fn _tanh(self) -> Value {
         let e2x = (2.0 * self.data()).exp();
         let tanh_res = (e2x - 1.0) / (e2x + 1.0);
 
@@ -145,6 +151,11 @@ impl Value {
         };
 
         Value(Rc::new(RefCell::new(val)))
+    }
+
+    pub fn tanh(self) -> Value {
+        let e2x = (Value::from(2.0) * self.clone()).exp();
+        (e2x.clone() - 1.0.into()) / (e2x + 1.0.into())
     }
 }
 
@@ -267,6 +278,118 @@ impl DivAssign for Value {
     }
 }
 
+pub trait Module {
+    fn zero_grad(&self) {
+        for value in self.parameters() {
+            value.reset_grad();
+        }
+    }
+
+    fn parameters(&self) -> Vec<Value>;
+}
+
+pub struct Neuron {
+    w: Vec<Value>,
+    b: Value,
+}
+
+impl Neuron {
+    pub fn new(nin: usize) -> Self {
+        let mut rng = rand::rng();
+        let mut w = Vec::with_capacity(nin);
+        w.extend(
+            std::iter::repeat_with(|| rng.random_range(-1.0..=1.0))
+                .take(nin)
+                .map(Value::new),
+        );
+        Self {
+            w,
+            b: Value::new(rng.random_range(-1.0..=1.0)),
+        }
+    }
+
+    pub fn call(&self, x: &[Value]) -> Value {
+        assert!(x.len() == self.w.len());
+        self.w
+            .iter()
+            .zip(x)
+            .fold(self.b.clone(), |acc, (w, x)| acc + (w.clone() * x.clone()))
+    }
+}
+
+impl Module for Neuron {
+    fn parameters(&self) -> Vec<Value> {
+        let mut res = Vec::new();
+        res.extend(self.w.iter().map(|v| v.clone()));
+        res.push(self.b.clone());
+        res
+    }
+}
+
+pub struct Layer {
+    ws: Vec<Neuron>,
+}
+
+impl Layer {
+    pub fn new(nin: usize, nout: usize) -> Self {
+        let mut ws = Vec::new();
+        ws.extend(std::iter::repeat_with(|| Neuron::new(nin)).take(nout));
+        Self { ws }
+    }
+
+    pub fn call(&self, x: &[Value]) -> Vec<Value> {
+        let mut res = Vec::new();
+        res.extend(self.ws.iter().map(|neuron| neuron.call(x)));
+        res
+    }
+}
+
+impl Module for Layer {
+    fn parameters(&self) -> Vec<Value> {
+        let mut res = Vec::new();
+        for neuron in self.ws.iter() {
+            res.extend(neuron.parameters())
+        }
+        res
+    }
+}
+
+pub struct MLP {
+    layers: Vec<Layer>,
+}
+
+impl MLP {
+    pub fn new(mut nin: usize, nouts: &[usize]) -> Self {
+        let mut layers = Vec::new();
+        layers.extend(nouts.iter().map(|nout| {
+            let layer = Layer::new(nin, *nout);
+            nin = *nout;
+            layer
+        }));
+        Self { layers }
+    }
+
+    pub fn call(&self, x: &[Value]) -> Vec<Value> {
+        let mut res = self.layers[0].call(x);
+        if self.layers.len() > 1 {
+            for layer in &self.layers[1..] {
+                res = layer.call(&res);
+            }
+        }
+        res
+    }
+}
+
+impl Module for MLP {
+    fn parameters(&self) -> Vec<Value> {
+        let mut res = Vec::new();
+        for layer in self.layers.iter() {
+            res.extend(layer.parameters())
+        }
+        res
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,5 +464,54 @@ mod tests {
         let (a, b) = compute_graph();
         assert_eq!(format!("{:.4}", a), "138.8338");
         assert_eq!(format!("{:.4}", b), "645.5773");
+    }
+
+    #[test]
+    fn karpathy_video_tutorial() {
+        let x1 = Value::new(2.0);
+        let x2 = Value::new(0.0);
+
+        let w1 = Value::new(-3.0);
+        let w2 = Value::new(1.0);
+
+        let b = Value::new(6.8813735870195432);
+
+        let x1w1 = x1.clone() * w1.clone();
+        let x2w2 = x2.clone() * w2.clone();
+        let x1w1x2w2 = x1w1.clone() + x2w2.clone();
+        let n = x1w1x2w2.clone() + b.clone();
+        let o = n.clone().tanh();
+
+        assert_eq!(format!("{:.4}", n.data()), "0.8814");
+        assert_eq!(format!("{:.4}", o.data()), "0.7071");
+
+        o.backward();
+        assert_eq!(format!("{:.4}", n.gradient()), "0.5000");
+        assert_eq!(format!("{:.4}", w2.gradient()), "0.0000");
+        assert_eq!(format!("{:.4}", x2.gradient()), "0.5000");
+        assert_eq!(format!("{:.4}", x1.gradient()), "-1.5000");
+        assert_eq!(format!("{:.4}", w1.gradient()), "1.0000");
+    }
+
+    #[test]
+    fn test_nn() {
+        let nn = Neuron::new(2);
+        let x = [Value::new(2.0), Value::new(3.0)];
+
+        let v = nn.call(&x[..]);
+        println!("{:.4}", v.data());
+
+        let layer = Layer::new(2, 3);
+        let v = layer.call(&x[..]);
+
+        for v in v {
+            println!("{:.4}", v.data());
+        }
+
+        let mlp = MLP::new(2, &[4, 4, 1]);
+
+        let res = mlp.call(&x[..]);
+        println!("{}", res.len());
+        println!("{:.4}", res[0].data());
     }
 }

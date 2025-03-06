@@ -9,7 +9,12 @@ readme = "README.md"
 edition = "2021"
 
 [dependencies]
+rand = "0.9"
 
 [[example]]
 name = "simple_gradient"
 path = "examples/simple_gradient.rs"
+
+[[example]]
+name = "binary_classifer"
+path = "examples/binary_classifer.rs"
