@@ -106,7 +106,7 @@ impl Value {
         });
 
         let val = ValueInner {
-            data: if self.data() <= 0.0 { 0.0 } else { self.data() },
+            data: if self.data() > 0.0 { self.data() } else { 0.0 },
             gradient: 0.0,
             prevs: vec![self.0.clone()],
             grad_func,
@@ -292,8 +292,8 @@ pub trait Module {
 }
 
 pub struct Neuron {
-    w: Vec<Value>,
-    b: Value,
+    pub w: Vec<Value>,
+    pub b: Value,
     non_linear: bool,
 }
 
@@ -327,6 +327,18 @@ impl Neuron {
             value
         }
     }
+
+    pub fn pp(&self, offset: usize, x: &[Value]) -> Value {
+        print!("{}w: ", " ".repeat(offset));
+        for w in self.w.iter() {
+            print!("{}, ", w.data());
+        }
+        println!("{}", self.b.data());
+
+        let res = self.call(x);
+        println!("{}result: {}", " ".repeat(offset), res.data());
+        res
+    }
 }
 
 impl Module for Neuron {
@@ -339,7 +351,7 @@ impl Module for Neuron {
 }
 
 pub struct Layer {
-    ws: Vec<Neuron>,
+    pub ws: Vec<Neuron>,
 }
 
 impl Layer {
@@ -352,6 +364,21 @@ impl Layer {
     pub fn call(&self, x: &[Value]) -> Vec<Value> {
         let mut res = Vec::new();
         res.extend(self.ws.iter().map(|neuron| neuron.call(x)));
+        res
+    }
+
+    pub fn pp(&self, offset: usize, x: &[Value]) -> Vec<Value> {
+        print!("{}input: ", " ".repeat(offset));
+        for x in x {
+            print!("{}, ", x.data());
+        }
+        println!("");
+
+        let mut res = Vec::new();
+        for i in 0..self.ws.len() {
+            println!("{}neuron {}: ", " ".repeat(offset), i);
+            res.push(self.ws[i].pp(offset + 2, x));
+        }
         res
     }
 }
@@ -367,7 +394,7 @@ impl Module for Layer {
 }
 
 pub struct MLP {
-    layers: Vec<Layer>,
+    pub layers: Vec<Layer>,
 }
 
 impl MLP {
@@ -394,6 +421,17 @@ impl MLP {
         }
         println!("");
         res
+    }
+
+    pub fn pp(&self, x: &[Value]) {
+        println!("layer 0: ");
+
+        let mut x = self.layers[0].pp(2, x);
+
+        for i in 1..self.layers.len() {
+            println!("layer {i}: ");
+            x = self.layers[i].pp(2, &x[..]);
+        }
     }
 }
 
@@ -526,19 +564,10 @@ mod tests {
 
     #[test]
     fn print_test() {
-        let n = Neuron::new(2, true);
-        let ps = n.parameters();
-        ps[0].set_data(0.23550571390294128);
-        ps[1].set_data(0.06653114721000164);
-        let res = n.call(&[Value::new(1.12211461), Value::new(0.08147717)]);
-        println!("{}", res.data());
+        let mlp = MLP::new(2, &[16, 16, 1], true);
 
-        let w1 = 0.23550571390294128;
-        let w2 = 0.06653114721000164;
-        let x1 = 1.12211461;
-        let x2 = 0.08147717;
+        let input = [Value::new(0.777), Value::new(0.888)];
 
-        let res = x1*w1+x2*w2+0.0;
-        println!("{}", res);
+        mlp.pp(&input[..]);
     }
 }
