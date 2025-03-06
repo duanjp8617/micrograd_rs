@@ -12,8 +12,8 @@ edition = "2021"
 rand = "0.9"
 
 [[example]]
-name = "simple_gradient"
-path = "examples/simple_gradient.rs"
+name = "plane_classifier"
+path = "examples/plane_classifier.rs"
 
 [[example]]
 name = "binary_classifer"

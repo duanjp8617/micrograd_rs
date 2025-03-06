@@ -4,7 +4,7 @@ use std::convert::From;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::rc::Rc;
 
-use rand::Rng;
+use rand::distr::{Distribution, Uniform};
 
 type GradFunc = Box<dyn Fn(f64)>;
 type ObjPtr = Rc<RefCell<ValueInner>>;
@@ -231,8 +231,11 @@ impl Mul for Value {
         // d(x * y)/dx -> y * parent_grad
         // d(x * y)/dy -> x * parent_grad
         let grad_func = Box::new(move |parent_grad: f64| {
-            x.borrow_mut().gradient += y.borrow().data * parent_grad;
-            y.borrow_mut().gradient += x.borrow().data * parent_grad;
+            let x_grad_update = y.borrow().data * parent_grad;
+            let y_grad_update = x.borrow().data * parent_grad;
+
+            x.borrow_mut().gradient += x_grad_update;
+            y.borrow_mut().gradient += y_grad_update;
         });
 
         let val = ValueInner {
@@ -291,29 +294,38 @@ pub trait Module {
 pub struct Neuron {
     w: Vec<Value>,
     b: Value,
+    non_linear: bool,
 }
 
 impl Neuron {
-    pub fn new(nin: usize) -> Self {
+    pub fn new(nin: usize, non_linear: bool) -> Self {
+        let between = Uniform::try_from(-1.0..=1.0).unwrap();
         let mut rng = rand::rng();
         let mut w = Vec::with_capacity(nin);
         w.extend(
-            std::iter::repeat_with(|| rng.random_range(-1.0..=1.0))
+            std::iter::repeat_with(|| between.sample(&mut rng))
                 .take(nin)
                 .map(Value::new),
         );
         Self {
             w,
-            b: Value::new(rng.random_range(-1.0..=1.0)),
+            b: Value::new(0.0),
+            non_linear,
         }
     }
 
     pub fn call(&self, x: &[Value]) -> Value {
         assert!(x.len() == self.w.len());
-        self.w
+        let value = self
+            .w
             .iter()
             .zip(x)
-            .fold(self.b.clone(), |acc, (w, x)| acc + (w.clone() * x.clone()))
+            .fold(self.b.clone(), |acc, (w, x)| acc + (w.clone() * x.clone()));
+        if self.non_linear {
+            value.relu()
+        } else {
+            value
+        }
     }
 }
 
@@ -331,9 +343,9 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn new(nin: usize, nout: usize) -> Self {
+    pub fn new(nin: usize, nout: usize, non_linear: bool) -> Self {
         let mut ws = Vec::new();
-        ws.extend(std::iter::repeat_with(|| Neuron::new(nin)).take(nout));
+        ws.extend(std::iter::repeat_with(|| Neuron::new(nin, non_linear)).take(nout));
         Self { ws }
     }
 
@@ -359,10 +371,10 @@ pub struct MLP {
 }
 
 impl MLP {
-    pub fn new(mut nin: usize, nouts: &[usize]) -> Self {
+    pub fn new(mut nin: usize, nouts: &[usize], non_linear: bool) -> Self {
         let mut layers = Vec::new();
         layers.extend(nouts.iter().map(|nout| {
-            let layer = Layer::new(nin, *nout);
+            let layer = Layer::new(nin, *nout, non_linear);
             nin = *nout;
             layer
         }));
@@ -376,6 +388,11 @@ impl MLP {
                 res = layer.call(&res);
             }
         }
+        println!("finish a mlp call with");
+        for v in &res {
+            print!("{} ", v.data());
+        }
+        println!("");
         res
     }
 }
@@ -494,24 +511,34 @@ mod tests {
     }
 
     #[test]
-    fn test_nn() {
-        let nn = Neuron::new(2);
-        let x = [Value::new(2.0), Value::new(3.0)];
+    fn micrograd_github_repo_test() {
+        let x = Value::new(-4.0);
+        let z = Value::from(2) * x.clone() + 2.into() + x.clone();
+        let q = z.clone().relu() + z.clone() * x.clone();
+        let h = (z.clone() * z.clone()).relu();
+        let y = h.clone() + q.clone() + q.clone() * x.clone();
+        y.backward();
 
-        let v = nn.call(&x[..]);
-        println!("{:.4}", v.data());
+        assert_eq!(format!("{:.4}", y.data()), "-20.0000");
+        assert_eq!(format!("{:.4}", x.gradient()), "46.0000");
+        assert_eq!(format!("{:.4}", z.gradient()), "-8.0000");
+    }
 
-        let layer = Layer::new(2, 3);
-        let v = layer.call(&x[..]);
+    #[test]
+    fn print_test() {
+        let n = Neuron::new(2, true);
+        let ps = n.parameters();
+        ps[0].set_data(0.23550571390294128);
+        ps[1].set_data(0.06653114721000164);
+        let res = n.call(&[Value::new(1.12211461), Value::new(0.08147717)]);
+        println!("{}", res.data());
 
-        for v in v {
-            println!("{:.4}", v.data());
-        }
+        let w1 = 0.23550571390294128;
+        let w2 = 0.06653114721000164;
+        let x1 = 1.12211461;
+        let x2 = 0.08147717;
 
-        let mlp = MLP::new(2, &[4, 4, 1]);
-
-        let res = mlp.call(&x[..]);
-        println!("{}", res.len());
-        println!("{:.4}", res[0].data());
+        let res = x1*w1+x2*w2+0.0;
+        println!("{}", res);
     }
 }

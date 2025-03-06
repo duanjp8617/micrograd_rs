@@ -13,13 +13,13 @@ fn main() {
         [0.5, 1.0, 1.0],
         [1.0, 1.0, -1.0],
     ];
-    let ys = [2.0, -1.0, -1.0, 2.0];
+    let ys = [1.0, -1.0, -1.0, 1.0];
     let ys: Vec<_> = ys.into_iter().map(Value::new).collect();
 
-    let mlp = MLP::new(3, &[4, 4, 1]);
+    let mlp = MLP::new(3, &[4, 4, 1], false);
     let mut y_preds = Vec::new();
 
-    for i in 0..300 {
+    for i in 0..100 {
         y_preds.clear();
         for x in xs {
             let mut res = mlp.call(&(to_values(x)[..])).into_iter();
@@ -32,9 +32,7 @@ fn main() {
                 acc + (y.clone() - y_pred.clone()).powi(2)
             });
 
-        for w in mlp.parameters() {
-            w.reset_grad();
-        }
+        mlp.zero_grad();
         loss.backward();
 
         for w in mlp.parameters() {
